@@ -11,7 +11,7 @@ Status: **working**. The manager shows `Working · BUILT-IN (LEGACY) · v3.4.0-l
 | Toolchain | clang r416183b + GCC 4.9 binutils (same as the LineageOS build) |
 | KernelSU | KernelSU-Next `legacy` @ `e5f5ec99` + 4.9 fixes below |
 | Manager | KernelSU-Next v3.4.2 (uapi 5). The kernel reports uapi 5 (see fix 6) |
-| Extras for containers | SYSVIPC, FHANDLE, OVERLAY_FS, BRIDGE, MACVLAN, CPUSETS, CGROUP_FREEZER (USER_NS/PID_NS/DEVTMPFS were already on) |
+| Extras for containers | SYSVIPC, FHANDLE, OVERLAY_FS, BRIDGE, MACVLAN, CPUSETS, CGROUP_FREEZER, BINFMT_MISC, IPv6 NAT (USER_NS/PID_NS/DEVTMPFS were already on). `droidspaces check`: all required features found |
 
 ## Files
 
@@ -28,7 +28,18 @@ Status: **working**. The manager shows `Working · BUILT-IN (LEGACY) · v3.4.0-l
 3. **Manager never detected: ENOKEY.** On pre-5.4 fscrypt, the keys live in the process keyring. `track_throne()` runs under `ksu_cred` (no keyring), so opening `/data/app/*/base.apk` returned `-126`. On ENOKEY the open is retried with the caller's original creds.
 4. **Wrong `kernel_read()` argument order.** 4.9 has `kernel_read(file, offset, buf, count)`. apk_sign, throne_tracker, allowlist and ksud_integration called the new form (hidden by `-Wno-int-conversion`), so the signature check read garbage. They now use `ksu_kernel_read_compat()`.
 5. Small fixes: `ns_get_path()` returns `void *` before 4.11; `AT_FDCWD` was passed as an `int *`.
-6. **uapi 6 → 5.** The legacy branch moved to uapi 6 (module preinit + LOOKUP_SYMBOLS) after the v3.4.2 manager release. With 6, the manager shows "version 5 too low" and hides the Superuser and Module tabs. Preinit is disabled in this build, so the kernel reports 5, which is fully compatible.
+6. **Allowlist lost on every reboot.** Same pre-5.4 fscrypt keyring problem: the allowlist is saved under `ksu_cred` (no keyring), so the file under encrypted `/data/adb` ends up empty (`allowlist file invalid: 0`). `ksu_cred` now gets init's session keyring as soon as KernelSU captures it.
+7. **uapi 6 → 5.** The legacy branch moved to uapi 6 (module preinit + LOOKUP_SYMBOLS) after the v3.4.2 manager release. With 6, the manager shows "version 5 too low" and hides the Superuser and Module tabs. Preinit is disabled in this build, so the kernel reports 5, which is fully compatible.
+
+## Kernel fix (Samsung/LineageOS 4.9, not KernelSU)
+
+- **`/proc` mount deadlock.** In `fs/super.c`, `mount_ns_option()` (CONFIG_PROC_PARSE_OPTION_ON_MOUNT) returned `-EINVAL` on an unknown proc option without releasing the superblock it got locked from `sget_userns()`. systemd's `ProtectProc=` (`hidepid=invisible`) triggers this, and from then on every proc mount in that pid namespace hangs in `grab_super()` (D state, needs a reboot). Fixed with `deactivate_locked_super()`.
+
+## Containers (Droidspaces) on this kernel
+
+- Works: Ubuntu 22.04 (systemd 249) boots to `running` with SELinux **enforcing**.
+- **Use a sparse ext4 image rootfs (`use_sparse_image=1`), not a plain directory on `/data`.** On 4.9, fscrypt keys are per keyring, and systemd gives each service a new session keyring, so services fail with `Required key not available` (203/EXEC). Files inside a loop-mounted image are not fscrypt-encrypted.
+- No IPv4 from DHCP on some routers (a LineageOS issue, not KernelSU): set a static IP in the Wi-Fi settings, otherwise the container NAT has no uplink.
 
 ## Install (from LineageOS 20 already installed)
 

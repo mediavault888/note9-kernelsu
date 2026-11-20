@@ -22,6 +22,42 @@ index f6bd4da9..6dfc496c 100644
  
  	escape_with_root_profile();
  	ksu_sulog_emit_pending(pending_root, 0, GFP_KERNEL);
+diff --git a/kernel/hook/lsm_hooks.c b/kernel/hook/lsm_hooks.c
+index f7405a77..be0c896a 100644
+--- a/kernel/hook/lsm_hooks.c
++++ b/kernel/hook/lsm_hooks.c
+@@ -4,9 +4,12 @@
+ #include <linux/binfmts.h>
+ #include <linux/err.h>
+ #include <linux/atomic.h>
++#include <linux/key.h>
++#include <linux/cred.h>
+ 
+ #include "klog.h" // IWYU pragma: keep
+ #include "runtime/ksud_boot.h"
++#include "ksu.h"
+ #include "compat/kernel_compat.h"
+ #include "setuid_hook.h"
+ #include "manager/throne_tracker.h"
+@@ -29,6 +32,18 @@ static int ksu_key_permission(key_ref_t key_ref, const struct cred *cred,
+ 	}
+ 	init_session_keyring = cred->session_keyring;
+ 	pr_info("kernel_compat: got init_session_keyring\n");
++#ifdef CONFIG_KEYS
++	/*
++	 * Pre-5.4 fscrypt keys live in init's session keyring. Give ksu_cred
++	 * (used via override_creds for /data/adb and /data/app access) the same
++	 * keyring, otherwise files under encrypted /data return -ENOKEY and the
++	 * allowlist is saved empty ("allowlist file invalid: 0").
++	 */
++	if (ksu_cred && !ksu_cred->session_keyring && init_session_keyring) {
++		ksu_cred->session_keyring = key_get(init_session_keyring);
++		pr_info("kernel_compat: ksu_cred uses init_session_keyring\n");
++	}
++#endif
+ 	return 0;
+ }
+ #endif
 diff --git a/kernel/infra/su_mount_ns.c b/kernel/infra/su_mount_ns.c
 index c6a7d0a8..abf419c8 100644
 --- a/kernel/infra/su_mount_ns.c
