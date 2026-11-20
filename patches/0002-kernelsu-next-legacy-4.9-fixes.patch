@@ -1,0 +1,244 @@
+diff --git a/kernel/feature/sucompat.c b/kernel/feature/sucompat.c
+index f6bd4da9..6dfc496c 100644
+--- a/kernel/feature/sucompat.c
++++ b/kernel/feature/sucompat.c
+@@ -262,7 +262,18 @@ int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
+ 
+ 	pending_root = ksu_sulog_capture_root_execve_kern(filename->name, sucompat_argv, GFP_KERNEL);
+ 
+-	memcpy((void *)filename->name, ksud_path, sizeof(ksud_path));
++	/* Before the manager has installed /data/adb/ksud, exec'ing it fails
++	 * with ENOENT and the manager never gets the root shell it needs to
++	 * install it. Fall back to sh (same length string) until then, like
++	 * the syscall-level path above does. */
++	if (READ_ONCE(ksu_ksud_present)) {
++		memcpy((void *)filename->name, ksud_path, sizeof(ksud_path));
++	} else {
++		static const char sh_path[] = SH_PATH;
++		BUILD_BUG_ON(sizeof(sh_path) > sizeof(su));
++		memcpy((void *)filename->name, sh_path, sizeof(sh_path));
++		ksu_recheck_ksud();
++	}
+ 
+ 	escape_with_root_profile();
+ 	ksu_sulog_emit_pending(pending_root, 0, GFP_KERNEL);
+diff --git a/kernel/infra/su_mount_ns.c b/kernel/infra/su_mount_ns.c
+index c6a7d0a8..abf419c8 100644
+--- a/kernel/infra/su_mount_ns.c
++++ b/kernel/infra/su_mount_ns.c
+@@ -1,3 +1,4 @@
++#include <linux/err.h>
+ #include <linux/dcache.h>
+ #include <linux/errno.h>
+ #include <linux/fdtable.h>
+@@ -75,7 +76,12 @@ try_setns:
+         goto out;
+     }
+     struct path ns_path;
++#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 11, 0)
++    /* <4.11: ns_get_path() returns void * (NULL or ERR_PTR) */
++    long ret = PTR_ERR_OR_ZERO(ns_get_path(&ns_path, pid1_task, &mntns_operations));
++#else
+     long ret = ns_get_path(&ns_path, pid1_task, &mntns_operations);
++#endif
+     put_task_struct(pid1_task);
+     if (ret) {
+         pr_warn("failed get path for init mount namespace: %ld\n", ret);
+diff --git a/kernel/manager/apk_sign.c b/kernel/manager/apk_sign.c
+index 50b59e27..0080dc53 100644
+--- a/kernel/manager/apk_sign.c
++++ b/kernel/manager/apk_sign.c
+@@ -1,5 +1,6 @@
+ #include "util.h"
+ #include "compat/kernel_compat.h"
++#include <linux/cred.h>
+ #include <linux/err.h>
+ #include <linux/fs.h>
+ #include <linux/gfp.h>
+@@ -81,7 +82,7 @@ static bool read_exact(struct file *fp, void *buffer, size_t size, loff_t *pos,
+ 	if (*pos < 0 || *pos > end || size > (size_t)(end - *pos))
+ 		return false;
+ 
+-	return kernel_read(fp, buffer, size, pos) == (ssize_t)size;
++	return ksu_kernel_read_compat(fp, buffer, size, pos) == (ssize_t)size;
+ }
+ 
+ static bool read_length_prefixed_end(struct file *fp, loff_t *pos, loff_t container_end, loff_t *value_end)
+@@ -161,8 +162,24 @@ static __always_inline bool check_v2_signature(char *path,
+ 
+ 	struct file *fp = ksu_filp_open_nonotify(path, O_RDONLY | O_NOATIME);
+ 	if (IS_ERR(fp)) {
+-		pr_err("open %s error.\n", path);
+-		return false;
++		long err = PTR_ERR(fp);
++		/* Pre-5.4 fscrypt: key is in the caller's keyring, not ksu_cred's.
++		 * Retry the open with the caller's original creds. */
++		extern const struct cred *ksu_throne_orig_cred;
++		if (err == -ENOKEY && ksu_throne_orig_cred) {
++			const struct cred *saved = override_creds(ksu_throne_orig_cred);
++			fp = filp_open(path, O_RDONLY, 0);
++			revert_creds(saved);
++		} else {
++			fp = filp_open(path, O_RDONLY, 0);
++		}
++		if (IS_ERR(fp)) {
++			pr_err("open %s error: %ld, retry open: %ld\n", path, err,
++			       PTR_ERR(fp));
++			return false;
++		}
++		pr_info("open %s: nonotify open failed (%ld), retry open ok\n",
++			path, err);
+ 	}
+ 
+ 	file_size = generic_file_llseek(fp, 0, SEEK_END);
+@@ -192,7 +209,7 @@ static __always_inline bool check_v2_signature(char *path,
+ 		memset(eocd_buffer, 0, search_size);
+ 
+ 		pos = file_size - search_size;
+-		if (kernel_read(fp, eocd_buffer, search_size, &pos) != search_size) {
++		if (ksu_kernel_read_compat(fp, eocd_buffer, search_size, &pos) != search_size) {
+ 			kvfree(eocd_buffer);
+ 			goto clean;
+ 		}
+diff --git a/kernel/manager/throne_tracker.c b/kernel/manager/throne_tracker.c
+index a58ef960..de941416 100644
+--- a/kernel/manager/throne_tracker.c
++++ b/kernel/manager/throne_tracker.c
+@@ -1,3 +1,4 @@
++#include "compat/kernel_compat.h"
+ #include "ksu.h"
+ #include "linux/cred.h"
+ #include "linux/namei.h"
+@@ -277,10 +278,19 @@ static bool is_uid_exist(uid_t uid, char *package, void *data)
+ 	return exist;
+ }
+ 
++/*
++ * Caller's original creds while track_throne() runs (under
++ * throne_tracker_mutex). On pre-5.4 kernels fscrypt keys live in the
++ * process keyring, so ksu_cred (no keyring) gets -ENOKEY on /data/app
++ * APKs; apk_sign.c retries the open with these creds.
++ */
++const struct cred *ksu_throne_orig_cred;
++
+ void track_throne(bool prune_only)
+ {
+ 	mutex_lock(&throne_tracker_mutex);
+ 	const struct cred *old_cred = override_creds(ksu_cred);
++	ksu_throne_orig_cred = old_cred;
+ 	struct file *fp = filp_open(SYSTEM_PACKAGES_LIST_PATH, O_RDONLY, 0);
+ 	if (IS_ERR(fp)) {
+ 		pr_err("%s: open " SYSTEM_PACKAGES_LIST_PATH " failed: %ld\n", __func__,
+@@ -296,13 +306,13 @@ void track_throne(bool prune_only)
+ 	loff_t line_start = 0;
+ 	char buf[KSU_MAX_PACKAGE_NAME];
+ 	for (;;) {
+-		ssize_t count = kernel_read(fp, &chr, sizeof(chr), &pos);
++		ssize_t count = ksu_kernel_read_compat(fp, &chr, sizeof(chr), &pos);
+ 		if (count != sizeof(chr))
+ 			break;
+ 		if (chr != '\n')
+ 			continue;
+ 
+-		count = kernel_read(fp, buf, sizeof(buf) - 1, &line_start);
++		count = ksu_kernel_read_compat(fp, buf, sizeof(buf) - 1, &line_start);
+ 		if (count <= 0) {
+ 			break;
+ 		}
+@@ -421,6 +431,7 @@ out:
+ 		kfree(np);
+ 	}
+ out_revert_cred:
++	ksu_throne_orig_cred = NULL;
+ 	revert_creds(old_cred);
+ 	mutex_unlock(&throne_tracker_mutex);
+ }
+diff --git a/kernel/policy/allowlist.c b/kernel/policy/allowlist.c
+index 4723134f..7ea8d2e2 100644
+--- a/kernel/policy/allowlist.c
++++ b/kernel/policy/allowlist.c
+@@ -580,14 +580,14 @@ void ksu_load_allow_list()
+ 	}
+ 
+ 	// verify magic
+-	if (kernel_read(fp, &magic, sizeof(magic), &off) != sizeof(magic) ||
++	if (ksu_kernel_read_compat(fp, &magic, sizeof(magic), &off) != sizeof(magic) ||
+ 	    magic != FILE_MAGIC) {
+ 		pr_err("allowlist file invalid: %d!\n", magic);
+ 		goto exit;
+ 	}
+ 
+ 	// get file version
+-	if (kernel_read(fp, &version, sizeof(version), &off) != sizeof(version)) {
++	if (ksu_kernel_read_compat(fp, &version, sizeof(version), &off) != sizeof(version)) {
+ 		pr_err("allowlist read version: %d failed\n", version);
+ 		goto exit;
+ 	}
+@@ -605,7 +605,7 @@ void ksu_load_allow_list()
+ 	while (true) {
+ 		struct app_profile profile;
+ 
+-		ret = kernel_read(fp, &profile, app_profile_size, &off);
++		ret = ksu_kernel_read_compat(fp, &profile, app_profile_size, &off);
+ 
+ 		if (ret != app_profile_size) {
+ 			if (ret != 0)
+diff --git a/kernel/preinit/preinit.c b/kernel/preinit/preinit.c
+index f93aa5e0..b4e8d262 100644
+--- a/kernel/preinit/preinit.c
++++ b/kernel/preinit/preinit.c
+@@ -49,7 +49,7 @@ void __init ksu_preinit_init(void)
+         return;
+     }
+ 
+-    written = kernel_write(file, ksu_preinit_runner_start, size, &pos);
++    written = ksu_kernel_write_compat(file, ksu_preinit_runner_start, size, &pos);
+     if (written != size) {
+         pr_err("preinit: write runner failed: %zd\n", written);
+         fput(file);
+diff --git a/kernel/runtime/ksud_integration.c b/kernel/runtime/ksud_integration.c
+index cb24420d..2f465c19 100644
+--- a/kernel/runtime/ksud_integration.c
++++ b/kernel/runtime/ksud_integration.c
+@@ -135,7 +135,7 @@ static void load_module_rc_once(void)
+ 		goto out_close_file;
+ 	}
+ 
+-	r = kernel_read(f, module_rc_buf, fsize, &pos);
++	r = ksu_kernel_read_compat(f, module_rc_buf, fsize, &pos);
+ 
+ 	if (r <= 0) {
+ 		pr_err("module rc: read failed: %zd\n", r);
+@@ -915,8 +915,11 @@ static int ksu_execve_ksud_common(const char __user *filename_user,
+ 	filename_in.name = path;
+ 	filename_p = &filename_in;
+ 
+-	return ksu_handle_execveat_ksud(AT_FDCWD, &filename_p, argv, NULL,
+-					NULL);
++	{
++		int fd = AT_FDCWD; /* was passing AT_FDCWD itself as the int * */
++		return ksu_handle_execveat_ksud(&fd, &filename_p, argv, NULL,
++						NULL);
++	}
+ }
+ 
+ int __maybe_unused
+diff --git a/kernel/selinux/rules.c b/kernel/selinux/rules.c
+index abcdd75f..bb4f8bbe 100644
+--- a/kernel/selinux/rules.c
++++ b/kernel/selinux/rules.c
+@@ -61,9 +61,11 @@ static void reset_avc_cache()
+ 	#if defined(KSU_COMPAT_USE_SELINUX_STATE)
+ 	u32 seqno = selinux_state.ss ? ++selinux_state.ss->latest_granting : 1;
+ 	#else
+-	/* 4.9: no selinux_state; use a monotonic local seqno for AVC/policyload notifications */
+-	static u32 ksu_avc_seqno = 1;
+-	u32 seqno = ++ksu_avc_seqno;
++	/* 4.9: no selinux_state. Bump the policy's own latest_granting so AVC
++	 * inserts (seqno from security_compute_av) stay >= latest_notif; a private
++	 * counter leaves the AVC rejecting every insert ("seqno 1 < latest_notif 2"). */
++	extern u32 latest_granting;
++	u32 seqno = ++latest_granting;
+ 	#endif
+ 
+ #if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || \
