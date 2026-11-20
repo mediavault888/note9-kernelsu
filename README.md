@@ -3,14 +3,14 @@
 KernelSU-Next (built-in, manual hooks) for the **Samsung Galaxy Note 9 Exynos (SM-N960F, `crownlte`)**
 on **official LineageOS 20 (Android 13)**, the last official build: `lineage-20.0-20241226-nightly-crownlte-signed.zip`.
 
-Status: **working**. The manager shows `Working · BUILT-IN (LEGACY) · v3.4.0-legacy (33327)`, hook mode Manual.
+Status: **working**. The manager shows `Working · BUILT-IN (LEGACY) · v3.4.0-legacy (33327-5)`, hook mode Manual, and all tabs (Superuser, Module).
 
 | | |
 |---|---|
 | Kernel | `4.9.118-ksu`, LineageOS `android_kernel_samsung_exynos9810` @ `6a9461f9460c` (exact source of the ROM's own kernel) |
 | Toolchain | clang r416183b + GCC 4.9 binutils (same as the LineageOS build) |
 | KernelSU | KernelSU-Next `legacy` @ `e5f5ec99` + 4.9 fixes below |
-| Manager | KernelSU-Next v3.4.2. It shows a harmless "manager version 5 too low" note, because the kernel side is uapi 6 (module preinit, disabled here) |
+| Manager | KernelSU-Next v3.4.2 (uapi 5). The kernel reports uapi 5 (see fix 6) |
 | Extras for containers | SYSVIPC, FHANDLE, OVERLAY_FS, BRIDGE, MACVLAN, CPUSETS, CGROUP_FREEZER (USER_NS/PID_NS/DEVTMPFS were already on) |
 
 ## Files
@@ -28,6 +28,7 @@ Status: **working**. The manager shows `Working · BUILT-IN (LEGACY) · v3.4.0-l
 3. **Manager never detected: ENOKEY.** On pre-5.4 fscrypt, the keys live in the process keyring. `track_throne()` runs under `ksu_cred` (no keyring), so opening `/data/app/*/base.apk` returned `-126`. On ENOKEY the open is retried with the caller's original creds.
 4. **Wrong `kernel_read()` argument order.** 4.9 has `kernel_read(file, offset, buf, count)`. apk_sign, throne_tracker, allowlist and ksud_integration called the new form (hidden by `-Wno-int-conversion`), so the signature check read garbage. They now use `ksu_kernel_read_compat()`.
 5. Small fixes: `ns_get_path()` returns `void *` before 4.11; `AT_FDCWD` was passed as an `int *`.
+6. **uapi 6 → 5.** The legacy branch moved to uapi 6 (module preinit + LOOKUP_SYMBOLS) after the v3.4.2 manager release. With 6, the manager shows "version 5 too low" and hides the Superuser and Module tabs. Preinit is disabled in this build, so the kernel reports 5, which is fully compatible.
 
 ## Install (from LineageOS 20 already installed)
 

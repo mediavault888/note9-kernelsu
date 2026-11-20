@@ -242,3 +242,18 @@ index abcdd75f..bb4f8bbe 100644
  	#endif
  
  #if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || \
+diff --git a/uapi/supercall.h b/uapi/supercall.h
+index b2064554..0362120c 100644
+--- a/uapi/supercall.h
++++ b/uapi/supercall.h
+@@ -11,7 +11,9 @@
+ // 4: add KSU_GET_INFO_FLAG_BUNDLED
+ // 5: add EVENT_SERVICES with a start/skip result
+ // 6: add KSU_IOCTL_LOOKUP_SYMBOLS and KSU_GET_INFO_FLAG_PREINIT; modules.rc and preinit may live under /metadata/vold/ksu
+-#define KERNEL_SU_UAPI_VERSION 6
++/* note9-kernelsu: report 5 so the released v3.4.2 manager (uapi 5) enables all
++ * features; uapi 6 only adds preinit (disabled in this build) + LOOKUP_SYMBOLS. */
++#define KERNEL_SU_UAPI_VERSION 5
+ 
+ /* Magic numbers for reboot hook to install fd */
+ #define KSU_INSTALL_MAGIC1 0xDEADBEEF
