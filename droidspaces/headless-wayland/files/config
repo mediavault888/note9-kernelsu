@@ -1,0 +1,9 @@
+# /etc/headless-wayland/config  -- edit, then: systemctl restart headless-wayland
+RESOLUTION=1920x1080        # virtual screen size
+VNC_ADDR=0.0.0.0            # 0.0.0.0 = reachable via the port forward (5900)
+VNC_PORT=5900
+# Started inside the headless base session (nested). Examples:
+#   AUTOSTART="foot"            terminal only
+#   AUTOSTART="niri"            test niri nested (winit backend)
+#   AUTOSTART="labwc"           test labwc nested
+AUTOSTART="foot"

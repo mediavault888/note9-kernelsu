@@ -41,6 +41,10 @@ Status: **working**. The manager shows `Working · BUILT-IN (LEGACY) · v3.4.0-l
 - **Use a sparse ext4 image rootfs (`use_sparse_image=1`), not a plain directory on `/data`.** On 4.9, fscrypt keys are per keyring, and systemd gives each service a new session keyring, so services fail with `Required key not available` (203/EXEC). Files inside a loop-mounted image are not fscrypt-encrypted.
 - No IPv4 from DHCP on some routers (a LineageOS issue, not KernelSU): set a static IP in the Wi-Fi settings, otherwise the container NAT has no uplink.
 
+## Headless Wayland base
+
+`droidspaces/headless-wayland/`: an Ubuntu 24.04 Droidspaces container running sway (headless, software rendering) with VNC on :5900 and browser access (noVNC over HTTPS) on :6080. Other compositors run nested inside it. One installer script sets it all up; see its README.
+
 ## Install (from LineageOS 20 already installed)
 
 ```

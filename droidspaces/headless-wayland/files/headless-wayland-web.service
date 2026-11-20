@@ -1,0 +1,15 @@
+[Unit]
+Description=Headless Wayland base - browser access (noVNC, https://<phone>:6080)
+After=headless-wayland.service
+Requires=headless-wayland.service
+
+[Service]
+User=wl
+EnvironmentFile=/etc/headless-wayland/web.env
+# HTTPS + HTTP basic auth (user wl), bridged to the local-only wayvnc on 127.0.0.1:5901
+ExecStart=/bin/sh -c 'exec /usr/bin/websockify --web /opt/novnc --cert /etc/headless-wayland/tls_cert.pem --key /etc/headless-wayland/tls_key.pem --ssl-only --web-auth --auth-plugin BasicHTTPAuth --auth-source "wl:$WEB_PASSWORD" 6080 127.0.0.1:5901'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

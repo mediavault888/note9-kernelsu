@@ -1,0 +1,3 @@
+#!/bin/sh
+# hw-shot [file]: screenshot of the headless session (default /tmp/hw-shot.png)
+su wl -s /bin/sh -c "XDG_RUNTIME_DIR=/run/headless-wayland WAYLAND_DISPLAY=wayland-1 grim ${1:-/tmp/hw-shot.png}"

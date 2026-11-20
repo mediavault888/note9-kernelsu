@@ -1,0 +1,6 @@
+#!/bin/sh
+# nested <compositor> [args]  -- run another compositor as a window inside the headless base.
+# Most compositors pick their nested (winit/wayland) backend automatically when WAYLAND_DISPLAY is set.
+[ -z "$1" ] && { echo "usage: nested niri|labwc|weston|... [args]"; exit 1; }
+export XDG_RUNTIME_DIR=/run/headless-wayland WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1}
+exec "$@"

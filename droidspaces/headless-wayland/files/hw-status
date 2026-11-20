@@ -1,0 +1,8 @@
+#!/bin/sh
+# hw-status: show state of the headless Wayland base
+R=/run/headless-wayland
+echo "service : $(systemctl is-active headless-wayland)"
+S=$(ls $R/sway-ipc.*.sock 2>/dev/null | head -1)
+[ -n "$S" ] && su wl -s /bin/sh -c "SWAYSOCK=$S swaymsg -t get_outputs" | grep -E "^Output|Current mode" | sed 's/^ */  /'
+echo "vnc     : $(ss -ltn | grep -c ':5900 ') listener(s) on :5900"
+echo "clients : $(su wl -s /bin/sh -c "SWAYSOCK=$S swaymsg -t get_tree" 2>/dev/null | grep -oE '"app_id": "[^"]+"' | cut -d'"' -f4 | tr '\n' ' ')"
