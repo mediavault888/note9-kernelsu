@@ -278,6 +278,21 @@ index abcdd75f..bb4f8bbe 100644
  	#endif
  
  #if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || \
+diff --git a/kernel/selinux/selinux.c b/kernel/selinux/selinux.c
+index 258ca819..5bdac81f 100644
+--- a/kernel/selinux/selinux.c
++++ b/kernel/selinux/selinux.c
+@@ -285,3 +285,10 @@ void escape_to_root_for_adb_root(void)
+     }
+     commit_creds(cred);
+ }
++
++/* For kernels without the nosuid_transition permission (< 4.14): lets
++ * security/selinux/hooks.c check_nnp_nosuid() recognise the KernelSU domain. */
++u32 ksu_get_su_sid(void)
++{
++	return cached_su_sid;
++}
 diff --git a/uapi/supercall.h b/uapi/supercall.h
 index b2064554..0362120c 100644
 --- a/uapi/supercall.h

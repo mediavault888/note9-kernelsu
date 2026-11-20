@@ -294,7 +294,7 @@ index 605e78025..1ae43c001 100644
  		a = &stack_data;
  		a->type = LSM_AUDIT_DATA_NONE;
 diff --git a/security/selinux/hooks.c b/security/selinux/hooks.c
-index 13d6c93fc..f7e2523df 100644
+index 13d6c93fc..59df5d8f6 100644
 --- a/security/selinux/hooks.c
 +++ b/security/selinux/hooks.c
 @@ -320,7 +320,7 @@ static inline u32 cred_sid(const struct cred *cred)
@@ -431,7 +431,29 @@ index 13d6c93fc..f7e2523df 100644
  					   &dentry->d_name, tclass, &newsid);
  	if (rc)
  		return rc;
-@@ -2619,8 +2619,8 @@ static int selinux_bprm_set_creds(struct linux_binprm *bprm)
+@@ -2579,6 +2579,21 @@ static int check_nnp_nosuid(const struct linux_binprm *bprm,
+ 	if (new_tsec->sid == old_tsec->sid)
+ 		return 0; /* No change in credentials */
+ 
++#ifdef CONFIG_KSU
++	/*
++	 * 4.9 lacks the process2:nosuid_transition permission (v4.14), so init
++	 * can never exec /data/adb/ksud (on nosuid /data) into the KernelSU
++	 * domain and no ksud boot stage / module script runs. Allow exactly that
++	 * case; the normal SELinux transition/entrypoint checks still apply.
++	 */
++	if (!nnp) {
++		extern u32 ksu_get_su_sid(void);
++		u32 ksu_sid = ksu_get_su_sid();
++		if (ksu_sid && new_tsec->sid == ksu_sid)
++			return 0;
++	}
++#endif
++
+ 	/*
+ 	 * The only transitions we permit under NNP or nosuid
+ 	 * are transitions to bounded SIDs, i.e. SIDs that are
+@@ -2619,8 +2634,8 @@ static int selinux_bprm_set_creds(struct linux_binprm *bprm)
  	if (bprm->cred_prepared)
  		return 0;
  
@@ -442,7 +464,7 @@ index 13d6c93fc..f7e2523df 100644
  	isec = inode_security(inode);
  
  	/* Default to the current task SID. */
-@@ -2710,7 +2710,7 @@ static int selinux_bprm_set_creds(struct linux_binprm *bprm)
+@@ -2710,7 +2725,7 @@ static int selinux_bprm_set_creds(struct linux_binprm *bprm)
  
  static int selinux_bprm_secureexec(struct linux_binprm *bprm)
  {
@@ -451,7 +473,7 @@ index 13d6c93fc..f7e2523df 100644
  	u32 sid, osid;
  	int atsecure = 0;
  #ifdef CONFIG_RKP_KDP
-@@ -2802,7 +2802,7 @@ static void selinux_bprm_committing_creds(struct linux_binprm *bprm)
+@@ -2802,7 +2817,7 @@ static void selinux_bprm_committing_creds(struct linux_binprm *bprm)
  		return;
  #endif  /* CONFIG_RKP_KDP */
  
@@ -460,7 +482,7 @@ index 13d6c93fc..f7e2523df 100644
  	if (new_tsec->sid == new_tsec->osid)
  		return;
  
-@@ -2843,7 +2843,7 @@ static void selinux_bprm_committing_creds(struct linux_binprm *bprm)
+@@ -2843,7 +2858,7 @@ static void selinux_bprm_committing_creds(struct linux_binprm *bprm)
   */
  static void selinux_bprm_committed_creds(struct linux_binprm *bprm)
  {
@@ -469,7 +491,7 @@ index 13d6c93fc..f7e2523df 100644
  	struct itimerval itimer;
  	u32 osid, sid;
  	int rc, i;
-@@ -3213,7 +3213,7 @@ static int selinux_dentry_init_security(struct dentry *dentry, int mode,
+@@ -3213,7 +3228,7 @@ static int selinux_dentry_init_security(struct dentry *dentry, int mode,
  		return rc;
  #endif  /* CONFIG_RKP_KDP */
  
@@ -478,7 +500,7 @@ index 13d6c93fc..f7e2523df 100644
  					   d_inode(dentry->d_parent), name,
  					   inode_mode_to_security_class(mode),
  					   &newsid);
-@@ -3232,14 +3232,14 @@ static int selinux_dentry_create_files_as(struct dentry *dentry, int mode,
+@@ -3232,14 +3247,14 @@ static int selinux_dentry_create_files_as(struct dentry *dentry, int mode,
  	int rc;
  	struct task_security_struct *tsec;
  
@@ -495,7 +517,7 @@ index 13d6c93fc..f7e2523df 100644
  	tsec->create_sid = newsid;
  	return 0;
  }
-@@ -3249,7 +3249,7 @@ static int selinux_inode_init_security(struct inode *inode, struct inode *dir,
+@@ -3249,7 +3264,7 @@ static int selinux_inode_init_security(struct inode *inode, struct inode *dir,
  				       const char **name,
  				       void **value, size_t *len)
  {
@@ -504,7 +526,7 @@ index 13d6c93fc..f7e2523df 100644
  	struct superblock_security_struct *sbsec;
  	u32 sid, newsid, clen;
  	int rc;
-@@ -3264,7 +3264,7 @@ static int selinux_inode_init_security(struct inode *inode, struct inode *dir,
+@@ -3264,7 +3279,7 @@ static int selinux_inode_init_security(struct inode *inode, struct inode *dir,
  	sid = tsec->sid;
  	newsid = tsec->create_sid;
  
@@ -513,7 +535,7 @@ index 13d6c93fc..f7e2523df 100644
  		dir, qstr,
  		inode_mode_to_security_class(inode->i_mode),
  		&newsid);
-@@ -3273,7 +3273,7 @@ static int selinux_inode_init_security(struct inode *inode, struct inode *dir,
+@@ -3273,7 +3288,7 @@ static int selinux_inode_init_security(struct inode *inode, struct inode *dir,
  
  	/* Possibly defer initialization to selinux_complete_init. */
  	if (sbsec->flags & SE_SBINITIALIZED) {
@@ -522,7 +544,7 @@ index 13d6c93fc..f7e2523df 100644
  		isec->sclass = inode_mode_to_security_class(inode->i_mode);
  		isec->sid = newsid;
  		isec->initialized = LABEL_INITIALIZED;
-@@ -3424,7 +3424,7 @@ static noinline int audit_inode_permission(struct inode *inode,
+@@ -3424,7 +3439,7 @@ static noinline int audit_inode_permission(struct inode *inode,
  					   unsigned flags)
  {
  	struct common_audit_data ad;
@@ -531,7 +553,7 @@ index 13d6c93fc..f7e2523df 100644
  	int rc;
  #ifdef CONFIG_RKP_KDP
  	if ((rc = security_integrity_current()))
-@@ -3858,7 +3858,7 @@ static int selinux_inode_copy_up(struct dentry *src, struct cred **new)
+@@ -3858,7 +3873,7 @@ static int selinux_inode_copy_up(struct dentry *src, struct cred **new)
  			return -ENOMEM;
  	}
  
@@ -540,7 +562,7 @@ index 13d6c93fc..f7e2523df 100644
  	/* Get label from overlay inode and set it in create_sid */
  	selinux_inode_getsecid(d_inode(src), &sid);
  	tsec->create_sid = sid;
-@@ -4332,7 +4332,7 @@ static int selinux_cred_alloc_blank(struct cred *cred, gfp_t gfp)
+@@ -4332,7 +4347,7 @@ static int selinux_cred_alloc_blank(struct cred *cred, gfp_t gfp)
   */
  static void selinux_cred_free(struct cred *cred)
  {
@@ -549,7 +571,7 @@ index 13d6c93fc..f7e2523df 100644
  #ifdef CONFIG_RKP_KDP
  	if ((unsigned long) cred->security == 0x7) {
  		printk(KERN_ERR"CRED SECURITY is already freed  %s -> %p sec %p SHOULD BE 7\n",
-@@ -4375,7 +4375,7 @@ static int selinux_cred_prepare(struct cred *new, const struct cred *old,
+@@ -4375,7 +4390,7 @@ static int selinux_cred_prepare(struct cred *new, const struct cred *old,
  	if ((rc = security_integrity_current()))
  		return rc;
  #endif  /* CONFIG_RKP_KDP */
@@ -558,7 +580,7 @@ index 13d6c93fc..f7e2523df 100644
  
  	tsec = kmemdup(old_tsec, sizeof(struct task_security_struct), gfp);
  	if (!tsec)
-@@ -4390,8 +4390,8 @@ static int selinux_cred_prepare(struct cred *new, const struct cred *old,
+@@ -4390,8 +4405,8 @@ static int selinux_cred_prepare(struct cred *new, const struct cred *old,
   */
  static void selinux_cred_transfer(struct cred *new, const struct cred *old)
  {
@@ -569,7 +591,7 @@ index 13d6c93fc..f7e2523df 100644
  #ifdef CONFIG_RKP_KDP
  	int rc;
  
-@@ -4408,7 +4408,7 @@ static void selinux_cred_transfer(struct cred *new, const struct cred *old)
+@@ -4408,7 +4423,7 @@ static void selinux_cred_transfer(struct cred *new, const struct cred *old)
   */
  static int selinux_kernel_act_as(struct cred *new, u32 secid)
  {
@@ -578,7 +600,7 @@ index 13d6c93fc..f7e2523df 100644
  	u32 sid = current_sid();
  	int ret;
  #ifdef CONFIG_RKP_KDP
-@@ -4438,7 +4438,7 @@ static int selinux_kernel_act_as(struct cred *new, u32 secid)
+@@ -4438,7 +4453,7 @@ static int selinux_kernel_act_as(struct cred *new, u32 secid)
  static int selinux_kernel_create_files_as(struct cred *new, struct inode *inode)
  {
  	struct inode_security_struct *isec = inode_security(inode);
@@ -587,7 +609,7 @@ index 13d6c93fc..f7e2523df 100644
  	u32 sid = current_sid();
  	int ret;
  #ifdef CONFIG_RKP_KDP
-@@ -4684,7 +4684,7 @@ static int selinux_task_wait(struct task_struct *p)
+@@ -4684,7 +4699,7 @@ static int selinux_task_wait(struct task_struct *p)
  static void selinux_task_to_inode(struct task_struct *p,
  				  struct inode *inode)
  {
@@ -596,7 +618,7 @@ index 13d6c93fc..f7e2523df 100644
  	u32 sid = task_sid(p);
  
  #ifdef CONFIG_RKP_KDP
-@@ -4991,7 +4991,7 @@ static int sock_has_perm(struct task_struct *task, struct sock *sk, u32 perms)
+@@ -4991,7 +5006,7 @@ static int sock_has_perm(struct task_struct *task, struct sock *sk, u32 perms)
  static int selinux_socket_create(int family, int type,
  				 int protocol, int kern)
  {
@@ -605,7 +627,7 @@ index 13d6c93fc..f7e2523df 100644
  	u32 newsid;
  	u16 secclass;
  	int rc;
-@@ -5014,7 +5014,7 @@ static int selinux_socket_create(int family, int type,
+@@ -5014,7 +5029,7 @@ static int selinux_socket_create(int family, int type,
  static int selinux_socket_post_create(struct socket *sock, int family,
  				      int type, int protocol, int kern)
  {
@@ -614,7 +636,7 @@ index 13d6c93fc..f7e2523df 100644
  	struct inode_security_struct *isec = inode_security_novalidate(SOCK_INODE(sock));
  	struct sk_security_struct *sksec;
  	int err = 0;
-@@ -5784,7 +5784,7 @@ static int selinux_secmark_relabel_packet(u32 sid)
+@@ -5784,7 +5799,7 @@ static int selinux_secmark_relabel_packet(u32 sid)
  		return rc;
  #endif  /* CONFIG_RKP_KDP */
  
@@ -623,7 +645,7 @@ index 13d6c93fc..f7e2523df 100644
  	tsid = __tsec->sid;
  
  	return avc_has_perm(tsid, sid, SECCLASS_PACKET, PACKET__RELABELTO, NULL);
-@@ -6900,7 +6900,7 @@ static int selinux_getprocattr(struct task_struct *p,
+@@ -6900,7 +6915,7 @@ static int selinux_getprocattr(struct task_struct *p,
  	}
  
  	rcu_read_lock();
@@ -632,7 +654,7 @@ index 13d6c93fc..f7e2523df 100644
  
  	if (!strcmp(name, "current"))
  		sid = __tsec->sid;
-@@ -7013,7 +7013,7 @@ static int selinux_setprocattr(struct task_struct *p,
+@@ -7013,7 +7028,7 @@ static int selinux_setprocattr(struct task_struct *p,
  	   operation.  See selinux_bprm_set_creds for the execve
  	   checks and may_create for the file creation checks. The
  	   operation will then fail if the context is not permitted. */
@@ -641,7 +663,7 @@ index 13d6c93fc..f7e2523df 100644
  	if (!strcmp(name, "exec")) {
  		tsec->exec_sid = sid;
  	} else if (!strcmp(name, "fscreate")) {
-@@ -7103,7 +7103,7 @@ static void selinux_release_secctx(char *secdata, u32 seclen)
+@@ -7103,7 +7118,7 @@ static void selinux_release_secctx(char *secdata, u32 seclen)
  
  static void selinux_inode_invalidate_secctx(struct inode *inode)
  {
@@ -650,7 +672,7 @@ index 13d6c93fc..f7e2523df 100644
  #ifdef CONFIG_RKP_KDP
  	int rc;
  	if ((rc = security_integrity_current()))
-@@ -7176,7 +7176,7 @@ static int selinux_key_alloc(struct key *k, const struct cred *cred,
+@@ -7176,7 +7191,7 @@ static int selinux_key_alloc(struct key *k, const struct cred *cred,
  	if (!ksec)
  		return -ENOMEM;
  

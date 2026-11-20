@@ -35,6 +35,8 @@ Status: **working**. The manager shows `Working · BUILT-IN (LEGACY) · v3.4.0-l
 
 - **`/proc` mount deadlock.** In `fs/super.c`, `mount_ns_option()` (CONFIG_PROC_PARSE_OPTION_ON_MOUNT) returned `-EINVAL` on an unknown proc option without releasing the superblock it got locked from `sget_userns()`. systemd's `ProtectProc=` (`hidepid=invisible`) triggers this, and from then on every proc mount in that pid namespace hangs in `grab_super()` (D state, needs a reboot). Fixed with `deactivate_locked_super()`.
 
+- **ksud never ran at boot (no module scripts, no autostart).** `/data` is mounted `nosuid`, and 4.9 has no `process2:nosuid_transition` (added in 4.14), so init's `exec u:r:ksu:s0 -- /data/adb/ksud …` failed with `security_bounded_transition denied` / `Permission denied`. `check_nnp_nosuid()` in `security/selinux/hooks.c` now allows the nosuid (not NNP) case only when the target is KernelSU's own domain; normal SELinux transition checks still apply. With this, `ksud post-fs-data/services/boot-completed` run, and so do module scripts such as Droidspaces' run-at-boot.
+
 ## Containers (Droidspaces) on this kernel
 
 - Works: Ubuntu 22.04 (systemd 249) boots to `running` with SELinux **enforcing**.
